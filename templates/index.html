@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canvas PDF Downloader</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Canvas PDF Downloader</h1>
+            <p>Download course materials from Canvas</p>
+        </header>
+
+        <main>
+            <!-- Step 1: Connect to Canvas -->
+            <section class="step" id="step-connect">
+                <h2>Step 1: Connect to Canvas</h2>
+                <div class="form-group">
+                    <label for="canvas-url">Canvas URL:</label>
+                    <input type="text" id="canvas-url" placeholder="e.g., geisinger.instructure.com" value="geisinger.instructure.com">
+                </div>
+                <div class="form-group">
+                    <label for="api-token">API Token:
+                        <span class="help-icon" tabindex="0">
+                            ?
+                            <span class="help-tooltip">Create a new Canvas access token by logging in, going to Account → Settings → New Access Token, then paste it here.</span>
+                        </span>
+                    </label>
+                    <input type="password" id="api-token" placeholder="Your Canvas API token">
+                </div>
+                <button class="btn btn-primary" onclick="connectCanvas()">Connect</button>
+                <div id="connect-status" class="status"></div>
+            </section>
+
+            <!-- Step 2: Select Course -->
+            <section class="step" id="step-course" style="display: none;">
+                <h2>Step 2: Select Course</h2>
+                <div class="form-group">
+                    <label for="course-select">Course:</label>
+                    <select id="course-select" onchange="selectCourse()">
+                        <option value="">Loading courses...</option>
+                    </select>
+                </div>
+                <div id="course-status" class="status"></div>
+            </section>
+
+            <!-- Step 3: Select Module -->
+            <section class="step" id="step-module" style="display: none;">
+                <h2>Step 3: Select Module(s)</h2>
+                <p class="info">Choose one or more modules to download PDFs from (check the boxes below).</p>
+                <div class="form-group">
+                    <div id="module-list" class="module-list">Loading modules...</div>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label select-all">
+                        <input type="checkbox" id="select-all-modules" onchange="toggleAllModules(this.checked)">
+                        Select All Modules
+                    </label>
+                </div>
+                <div id="module-status" class="status"></div>
+            </section>
+
+            <!-- Step 4: Select PDF Types -->
+            <section class="step" id="step-filters" style="display: none;">
+                <h2>Step 4: Choose PDF Types</h2>
+                <p class="info">Select which types of PDFs you want to download:</p>
+                <div class="filter-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="pdf-filter" value="learning_objectives" checked>
+                        Learning Objectives
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="pdf-filter" value="slideset_single" checked>
+                        Slideset (Single)
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="pdf-filter" value="slideset_multiple" checked>
+                        Slideset (Multiple)
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="pdf-filter" value="studyguide" checked>
+                        Study Guide
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="pdf-filter" value="transcript" checked>
+                        Transcript
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="pdf-filter" value="handouts" checked>
+                        Handouts
+                    </label>
+                    <label class="checkbox-label select-all">
+                        <input type="checkbox" id="select-all-filters" checked onchange="toggleAllFilters()">
+                        <strong>Select All</strong>
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label for="max-workers">Concurrent downloads:
+                        <span class="help-icon" tabindex="0">
+                            ?
+                            <span class="help-tooltip">Higher numbers download more files at once (faster). Lower numbers reduce the chance of timeout or blocking by Canvas.</span>
+                        </span>
+                    </label>
+                    <input type="number" id="max-workers" min="1" max="20" value="6" title="Increase to download more files in parallel (may increase memory usage)">
+                    <p class="info">Use fewer workers if you see timeouts; increase to download faster.</p>
+                </div>
+            </section>
+
+            <!-- Step 5: Download -->
+            <section class="step" id="step-download" style="display: none;">
+                <h2>Step 5: Download PDFs</h2>
+                <p id="module-info" class="info"></p>
+                <button class="btn btn-success" onclick="downloadPDFs()">Download PDFs</button>
+                <div id="download-status" class="status"></div>
+                <div id="download-progress" class="progress" style="display: none;">
+                    <div id="download-progress-bar" class="progress-bar"></div>
+                </div>
+                <div id="download-progress-text" class="progress-text" style="display: none;">0%</div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Canvas PDF Downloader • Saves PDFs in organized folders</p>
+        </footer>
+    </div>
+
+    <script>
+        let sessionId = 'session_' + Date.now();
+        let currentCourse = null;
+        let selectedModuleIds = [];
+
+        function showStatus(elementId, message, type = 'info') {
+            const elem = document.getElementById(elementId);
+            elem.textContent = message;
+            elem.className = 'status ' + type;
+        }
+
+        function connectCanvas() {
+            const url = document.getElementById('canvas-url').value;
+            const token = document.getElementById('api-token').value;
+
+            if (!url || !token) {
+                showStatus('connect-status', '❌ Please fill in both fields', 'error');
+                return;
+            }
+
+            showStatus('connect-status', '⏳ Connecting...', 'info');
+
+            fetch('/api/init', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    canvas_url: url,
+                    api_token: token,
+                    session_id: sessionId
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                showStatus('connect-status', '✓ Connected!', 'success');
+                loadCourses();
+            })
+            .catch(e => showStatus('connect-status', '❌ ' + e.message, 'error'));
+        }
+
+        function loadCourses() {
+            document.getElementById('step-course').style.display = 'block';
+            showStatus('course-status', '⏳ Loading courses...', 'info');
+
+            fetch('/api/courses', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                const select = document.getElementById('course-select');
+                select.innerHTML = '<option value="">Select a course...</option>';
+                data.courses.forEach(course => {
+                    const opt = document.createElement('option');
+                    opt.value = course.id;
+                    opt.textContent = course.name;
+                    select.appendChild(opt);
+                });
+                showStatus('course-status', `✓ Found ${data.count} courses`, 'success');
+            })
+            .catch(e => showStatus('course-status', '❌ ' + e.message, 'error'));
+        }
+
+        function selectCourse() {
+            const courseId = document.getElementById('course-select').value;
+            if (!courseId) return;
+
+            const courseName = document.getElementById('course-select').options[
+                document.getElementById('course-select').selectedIndex
+            ].text;
+            currentCourse = { id: courseId, name: courseName };
+
+            document.getElementById('step-module').style.display = 'block';
+            showStatus('module-status', '⏳ Loading modules...', 'info');
+
+            fetch('/api/modules', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    course_id: courseId,
+                    session_id: sessionId
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                renderModuleList(data.modules);
+                showStatus('module-status', `✓ Found ${data.count} modules`, 'success');
+            })
+            .catch(e => showStatus('module-status', '❌ ' + e.message, 'error'));
+        }
+
+        function renderModuleList(modules) {
+            const container = document.getElementById('module-list');
+            container.innerHTML = '';
+            selectedModuleIds = [];
+
+            if (!modules || modules.length === 0) {
+                container.textContent = 'No modules found for this course.';
+                return;
+            }
+
+            modules.forEach(module => {
+                const label = document.createElement('label');
+                label.className = 'checkbox-label';
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'module-checkbox';
+                checkbox.dataset.moduleId = module.id;
+                checkbox.dataset.moduleName = module.name;
+                checkbox.addEventListener('change', () => onModuleToggle());
+
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(module.name));
+                container.appendChild(label);
+            });
+
+            document.getElementById('step-filters').style.display = 'block';
+            document.getElementById('step-download').style.display = 'block';
+
+            updateModuleInfo();
+        }
+
+        function onModuleToggle() {
+            selectedModuleIds = getSelectedModuleIds();
+            const selectedNames = getSelectedModuleNames();
+            updateModuleInfo(selectedNames);
+        }
+
+        function toggleAllModules(checked) {
+            const boxes = document.querySelectorAll('.module-checkbox');
+            boxes.forEach(box => {
+                box.checked = checked;
+            });
+            onModuleToggle();
+        }
+
+        function getSelectedModuleIds() {
+            const ids = [];
+            document.querySelectorAll('.module-checkbox:checked').forEach(cb => {
+                ids.push(cb.dataset.moduleId);
+            });
+            console.log('[DEBUG] Selected modules:', ids);
+            return ids;
+        }
+
+        function getSelectedModuleNames() {
+            const names = [];
+            document.querySelectorAll('.module-checkbox:checked').forEach(cb => {
+                names.push(cb.dataset.moduleName);
+            });
+            return names;
+        }
+
+        function updateModuleInfo(selectedNames = []) {
+            const count = selectedModuleIds.length;
+            let text;
+            if (count === 0) {
+                text = 'Select one or more modules to enable downloading.';
+            } else {
+                const namesText = selectedNames.slice(0, 5).join(', ');
+                const moreText = selectedNames.length > 5 ? `, +${selectedNames.length - 5} more` : '';
+                text = `Ready to download PDFs from ${count} module${count === 1 ? '' : 's'} (${namesText}${moreText}).`;
+            }
+            document.getElementById('module-info').textContent = text;
+        }
+
+        function toggleAllFilters() {
+            const isChecked = document.getElementById('select-all-filters').checked;
+            const filters = document.querySelectorAll('.pdf-filter');
+            filters.forEach(f => f.checked = isChecked);
+        }
+
+        function getSelectedFilters() {
+            const filters = [];
+            const checkboxes = document.querySelectorAll('.pdf-filter:checked');
+            checkboxes.forEach(cb => filters.push(cb.value));
+            console.log('[DEBUG] Selected filters:', filters);
+            return filters;
+        }
+
+        function downloadPDFs() {
+            if (!currentCourse) {
+                alert('Please select a course');
+                return;
+            }
+
+            const moduleIds = getSelectedModuleIds();
+            if (moduleIds.length === 0) {
+                alert('Please select at least one module');
+                return;
+            }
+
+            const selectedFilters = getSelectedFilters();
+            console.log('[DEBUG] About to download. Selected modules:', moduleIds, 'filters:', selectedFilters);
+            if (selectedFilters.length === 0) {
+                alert('Please select at least one PDF type');
+                return;
+            }
+
+            document.getElementById('download-progress').style.display = 'block';
+            document.getElementById('download-progress-text').style.display = 'block';
+            const progressBar = document.getElementById('download-progress-bar');
+            const progressText = document.getElementById('download-progress-text');
+            progressBar.style.width = '0%';
+            progressText.textContent = '0.0%';
+            showStatus('download-status', `⏳ Starting download for ${moduleIds.length} module${moduleIds.length === 1 ? '' : 's'}...`, 'info');
+
+            const maxWorkers = parseInt(document.getElementById('max-workers').value, 10) || 6;
+
+            fetch('/api/download/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    course_id: currentCourse.id,
+                    module_ids: moduleIds,
+                    filters: selectedFilters,
+                    max_workers: maxWorkers,
+                    session_id: sessionId
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                const jobId = data.job_id;
+
+                const pollProgress = () => {
+                    fetch(`/api/download/progress/${jobId}`)
+                        .then(r => r.json())
+                        .then(progress => {
+                            if (progress.error) throw new Error(progress.error);
+
+                            const percent = Math.max(0, Math.min(100, Number(progress.percent || 0)));
+                            progressBar.style.width = `${percent}%`;
+                            progressText.textContent = `${percent.toFixed(1)}%`;
+                            showStatus(
+                                'download-status',
+                                `⏳ Downloading modules: ${progress.completed_modules}/${progress.total_modules} completed...`,
+                                'info'
+                            );
+
+                            if (progress.status === 'completed') {
+                                progressBar.style.width = '100%';
+                                fetch(`/api/download/result/${jobId}`)
+                                    .then(r => {
+                                        if (r.status === 200) {
+                                            return r.blob();
+                                        }
+                                        return r.json().then(err => { throw new Error(err.error); });
+                                    })
+                                    .then(blob => {
+                                        const url = window.URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = 'canvas_pdfs.zip';
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        window.URL.revokeObjectURL(url);
+                                        document.body.removeChild(a);
+                                        setTimeout(() => {
+                                            document.getElementById('download-progress').style.display = 'none';
+                                            document.getElementById('download-progress-text').style.display = 'none';
+                                        }, 1200);
+                                        showStatus('download-status', '✓ Download complete!', 'success');
+                                    })
+                                    .catch(e => {
+                                        document.getElementById('download-progress').style.display = 'none';
+                                        document.getElementById('download-progress-text').style.display = 'none';
+                                        showStatus('download-status', '❌ ' + e.message, 'error');
+                                    });
+                                return;
+                            }
+
+                            if (progress.status === 'failed') {
+                                throw new Error(progress.error || 'Download failed');
+                            }
+
+                            setTimeout(pollProgress, 300);
+                        })
+                        .catch(e => {
+                            document.getElementById('download-progress').style.display = 'none';
+                            document.getElementById('download-progress-text').style.display = 'none';
+                            showStatus('download-status', '❌ ' + e.message, 'error');
+                        });
+                };
+
+                pollProgress();
+            })
+            .catch(e => {
+                document.getElementById('download-progress').style.display = 'none';
+                document.getElementById('download-progress-text').style.display = 'none';
+                showStatus('download-status', '❌ ' + e.message, 'error');
+            });
+        }
+    </script>
+</body>
+</html>
