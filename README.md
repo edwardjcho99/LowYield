@@ -13,7 +13,3 @@ chrome extension:
 radiology buddy (hover over image and it will diagnose radiograph and pair it next to normal)
 Etymology buddy (hover over a medical term to get it's etymology)
 EKG buddy
-
-games:
-antibiotic tower defense game
-geoguesser
