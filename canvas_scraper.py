@@ -30,6 +30,11 @@ class CanvasScraper:
         self.session.headers.update(self.headers)
         self.base_url = f'{self.canvas_url}/api/v1'
 
+    def validate_credentials(self) -> None:
+        """Verify the API token is valid. Raises requests.HTTPError on failure."""
+        response = self.session.get(f'{self.base_url}/users/self')
+        response.raise_for_status()
+
     def sanitize_path_component(self, value: str, fallback: str = 'Untitled') -> str:
         """Sanitize a directory/file name component to avoid nested paths and invalid characters."""
         if not value:

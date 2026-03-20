@@ -285,10 +285,11 @@ def init_scraper():
         
         try:
             scraper = CanvasScraper(canvas_url, api_token)
+            scraper.validate_credentials()
             set_scraper(session_id, scraper)
             return jsonify({'status': 'success', 'message': 'Connected to Canvas'})
         except Exception as e:
-            return jsonify({'error': f'Connection failed: {str(e)}'}), 400
+            return jsonify({'error': 'Invalid API token or Canvas URL'}), 401
             
     except Exception as e:
         return jsonify({'error': str(e)}), 400
@@ -339,6 +340,6 @@ def get_modules():
 if __name__ == '__main__':
     app.run(
         host='0.0.0.0',
-        port=int(os.getenv('PORT', '5000')),
+        port=int(os.getenv('PORT', '5001')),
         debug=os.getenv('FLASK_DEBUG', '0') == '1',
     )
